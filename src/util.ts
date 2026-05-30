@@ -120,53 +120,89 @@ export function makeOllamaChunk(
 export function convertOllamaMessagesToOpenAI(
   messages: OllamaChatMessage[],
 ): ChatCompletionMessageParam[] {
-  // Store all tool call IDs in order
+  const result: ChatCompletionMessageParam[] = [];
   const toolCallIds: string[] = [];
 
   const makeToolCallId = (): string => {
     return randomBytes(5).toString('hex').slice(0, 9);
   };
 
-  return messages.map((msg): ChatCompletionMessageParam => {
-    // Handle tool calls in assistant messages
-    if (msg.role === 'assistant' && msg.tool_calls) {
-      // Clear previous tool call IDs and generate new ones
-      toolCallIds.length = 0;
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
 
-      return {
-        role: 'assistant',
-        content: msg.content,
-        // @ts-ignore - Bypass for DeepSeek's strict thinking mode validation
-        reasoning_content: '',
-        tool_calls: msg.tool_calls.map((tc) => {
-          const toolCallId = makeToolCallId();
-          toolCallIds.push(toolCallId); // Store each tool call ID
-          return {
-            id: toolCallId,
-            type: 'function',
-            function: {
-              name: tc.function.name,
-              arguments: JSON.stringify(tc.function.arguments),
-            },
-          };
-        }),
-      };
-    }
-
-    // Handle tool responses
+    // 1. Handle Tool Responses
     if (msg.role === 'tool') {
-      // Use the next available tool call ID in sequence
-      const toolCallId = toolCallIds.shift() || makeToolCallId();
-      return {
+      const toolCallId = toolCallIds.shift();
+
+      if (!toolCallId) {
+        // Orphaned tool message. DeepSeek strict validation fails if sent as 'tool'.
+        // Convert to a user message to preserve the context safely.
+        result.push({
+          role: 'user',
+          content: `[Tool Result]: ${msg.content}`,
+        } as ChatCompletionMessageParam);
+        continue;
+      }
+
+      result.push({
         role: 'tool',
         content: msg.content,
         tool_call_id: toolCallId,
-      };
+      });
+      continue;
     }
 
-    // Handle images if present
+    // 2. Handle Assistant Messages with Tool Calls
+    if (msg.role === 'assistant' && msg.tool_calls && msg.tool_calls.length > 0) {
+      // Lookahead: Verify if the exact number of tool messages follow
+      const expectedTools = msg.tool_calls.length;
+      let actualTools = 0;
+      for (let j = i + 1; j < messages.length; j++) {
+        if (messages[j].role === 'tool') actualTools++;
+        else break; // Stop counting if we hit a non-tool message
+      }
+
+      if (expectedTools !== actualTools) {
+        // Mismatch! Raycast dropped or mangled the tool history.
+        // Push as a regular text message without tool_calls to avoid the 400 error.
+        result.push({
+          role: 'assistant',
+          content: msg.content || '',
+          // @ts-ignore - Bypass for DeepSeek's strict thinking mode validation
+          reasoning_content: "",
+        });
+        // We do NOT populate toolCallIds, so any following tool messages become neutralized.
+        continue;
+      }
+
+      // If counts match, proceed normally
+      toolCallIds.length = 0;
+      const openAIToolCalls = msg.tool_calls.map((tc) => {
+        const toolCallId = makeToolCallId();
+        toolCallIds.push(toolCallId);
+        return {
+          id: toolCallId,
+          type: 'function' as const,
+          function: {
+            name: tc.function.name,
+            arguments: JSON.stringify(tc.function.arguments),
+          },
+        };
+      });
+
+      result.push({
+        role: 'assistant',
+        content: msg.content || '',
+        // @ts-ignore
+        reasoning_content: "",
+        tool_calls: openAIToolCalls,
+      });
+      continue;
+    }
+
+    // 3. Handle Images (User)
     if (msg.images && msg.images.length > 0 && msg.role === 'user') {
-      return {
+      result.push({
         role: 'user',
         content: [
           { type: 'text', text: msg.content },
@@ -175,25 +211,27 @@ export function convertOllamaMessagesToOpenAI(
             image_url: { url: `data:image/jpeg;base64,${img}` },
           })),
         ],
-      };
+      });
+      continue;
     }
 
-    // Handle regular assistant messages (without tool calls)
+    // 4. Handle Regular Messages
     if (msg.role === 'assistant') {
-      return {
+      result.push({
         role: 'assistant',
+        content: msg.content || '',
+        // @ts-ignore
+        reasoning_content: "",
+      });
+    } else {
+      result.push({
+        role: msg.role as 'user' | 'system',
         content: msg.content,
-        // @ts-ignore - Bypass for DeepSeek's strict thinking mode validation
-        reasoning_content: '',
-      } as ChatCompletionMessageParam;
+      } as ChatCompletionMessageParam);
     }
+  }
 
-    // Handle regular messages (user, system)
-    return {
-      role: msg.role as 'user' | 'system',
-      content: msg.content,
-    } as ChatCompletionMessageParam;
-  });
+  return result;
 }
 
 export function convertRaycastToolsToOpenAI(
