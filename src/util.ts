@@ -136,6 +136,8 @@ export function convertOllamaMessagesToOpenAI(
       return {
         role: 'assistant',
         content: msg.content,
+        // @ts-ignore - Bypass for DeepSeek's strict thinking mode validation
+        reasoning_content: '',
         tool_calls: msg.tool_calls.map((tc) => {
           const toolCallId = makeToolCallId();
           toolCallIds.push(toolCallId); // Store each tool call ID
@@ -176,11 +178,21 @@ export function convertOllamaMessagesToOpenAI(
       };
     }
 
-    // Handle regular messages
+    // Handle regular assistant messages (without tool calls)
+    if (msg.role === 'assistant') {
+      return {
+        role: 'assistant',
+        content: msg.content,
+        // @ts-ignore - Bypass for DeepSeek's strict thinking mode validation
+        reasoning_content: '',
+      } as ChatCompletionMessageParam;
+    }
+
+    // Handle regular messages (user, system)
     return {
-      role: msg.role,
+      role: msg.role as 'user' | 'system',
       content: msg.content,
-    };
+    } as ChatCompletionMessageParam;
   });
 }
 
