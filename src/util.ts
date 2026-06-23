@@ -119,6 +119,7 @@ export function makeOllamaChunk(
 
 export function convertOllamaMessagesToOpenAI(
   messages: OllamaChatMessage[],
+  supportVision: boolean = false,
 ): ChatCompletionMessageParam[] {
   const result: ChatCompletionMessageParam[] = [];
   const toolCallIds: string[] = [];
@@ -202,16 +203,23 @@ export function convertOllamaMessagesToOpenAI(
 
     // 3. Handle Images (User)
     if (msg.images && msg.images.length > 0 && msg.role === 'user') {
-      result.push({
-        role: 'user',
-        content: [
-          { type: 'text', text: msg.content },
-          ...msg.images.map((img) => ({
-            type: 'image_url' as const,
-            image_url: { url: `data:image/jpeg;base64,${img}` },
-          })),
-        ],
-      });
+      if (supportVision) {
+        result.push({
+          role: 'user',
+          content: [
+            { type: 'text', text: msg.content },
+            ...msg.images.map((img) => ({
+              type: 'image_url' as const,
+              image_url: { url: `data:image/jpeg;base64,${img}` },
+            })),
+          ],
+        });
+      } else {
+        result.push({
+          role: 'user',
+          content: msg.content,
+        } as ChatCompletionMessageParam);
+      }
       continue;
     }
 
