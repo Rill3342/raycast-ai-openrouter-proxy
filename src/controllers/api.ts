@@ -41,7 +41,8 @@ export const makeApiController = ({ openai, models }: AppContext): ApiController
         throw new HttpError(400, `Model ${requestedModel} not found`);
       }
 
-      const openaiMessages = convertOllamaMessagesToOpenAI(messages);
+      const supportVision = modelConfig.capabilities.includes('vision');
+      const openaiMessages = convertOllamaMessagesToOpenAI(messages, supportVision);
       const openaiTools = convertRaycastToolsToOpenAI(tools);
 
       const chatConfig: ChatCompletionCreateParamsStreaming = {
